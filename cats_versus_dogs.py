@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from PIL import Image
+from keras.callbacks import ModelCheckpoint
+
 
 # this for test data, needs to be manually downloaded and transferred into folder data/test
 # https://www.kaggle.com/datasets/aleemaparakatta/cats-and-dogs-mini-dataset?resource=download
@@ -158,6 +160,29 @@ def predict_image(model, image_path, image_size):
         print(f"An error occurred during prediction: {e}")
 
 
+def plot_hist(history):
+    print(history.history.keys())
+    acc = history.history['accuracy']
+    val_acc = history.history['val_accuracy']
+    loss = history.history['loss']
+    val_loss = history.history['val_loss']
+    epochs_range = range(len(acc))
+
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs_range, acc, label='Training Accuracy')
+    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+    plt.legend(loc='lower right')
+    plt.title('Training and Validation Accuracy')
+
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, loss, label='Training Loss')
+    plt.plot(epochs_range, val_loss, label='Validation Loss')
+    plt.legend(loc='upper right')
+    plt.title('Training and Validation Loss')
+    plt.show()
+
+
 def main():
     """
     Main function to run the entire cats vs dogs classification workflow.
@@ -200,11 +225,32 @@ def main():
     model = build_model(IMAGE_SIZE + (3,))
     model.summary()
 
+    checkpoint_dir = 'checkpoints'
+    os.makedirs(checkpoint_dir, exist_ok=True)  # Create the directory if it doesn't exist
+
+    filepath = os.path.join(checkpoint_dir, "best_model.keras")
+
+    checkpoint_callback = ModelCheckpoint(
+        filepath=filepath,
+        monitor='val_loss',
+        save_best_only=True,
+        save_weights_only=False,
+        mode='min',
+        verbose=1
+    )
+    # Load the best saved model
+    # best_model = tf.keras.models.load_model('checkpoints/best_model.keras')
+    # Use best_model for evaluation or predictions
+    # predict_image(best_model, 'path_to_new_image.jpg', IMAGE_SIZE
+
     history = model.fit(
         train_ds,
         epochs=10,
-        validation_data=validation_ds
+        validation_data=validation_ds,
+        callbacks=[checkpoint_callback]
     )
+
+    plot_hist(history)
 
     img_dir = "data/test/cats_set/cat.4001.jpg"  # Update this path
     predict_image(model, img_dir, IMAGE_SIZE)
