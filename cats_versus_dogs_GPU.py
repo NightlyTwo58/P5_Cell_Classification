@@ -16,7 +16,7 @@ def main():
     # validation_dir = os.path.join(extracted_data_dir, 'validation')
 
     IMAGE_SIZE = (250, 250)
-    BATCH_SIZE = 3
+    BATCH_SIZE = 4
     SEED = 44775
 
     train = 'data/train'
@@ -71,7 +71,7 @@ def main():
 
         history = model.fit(
             train_ds,
-            epochs=10,
+            epochs=9,
             validation_data=validation_ds,
             callbacks=[checkpoint_callback, reduce_lr]
         )

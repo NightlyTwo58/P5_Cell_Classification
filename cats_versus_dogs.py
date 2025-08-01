@@ -85,7 +85,7 @@ def create_datasets(data_dir, image_size, batch_size, seed):
 
 def build_model(input_shape):
     """
-    Builds and returns the CNN model.
+    Builds and returns the CNN model with Batch Normalization.
 
     Args:
         input_shape (tuple): The shape of the input images (height, width, channels).
@@ -102,20 +102,43 @@ def build_model(input_shape):
     model = tf.keras.Sequential([
         tf.keras.layers.Rescaling(1. / 255, input_shape=input_shape),
         data_augmentation,
-        tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu'),
+
+        tf.keras.layers.Conv2D(32, 3, padding='same'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
         tf.keras.layers.MaxPooling2D(3),
-        tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu'),
+
+        # Second convolutional block with Batch Normalization
+        tf.keras.layers.Conv2D(64, 3, padding='same'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
         tf.keras.layers.MaxPooling2D(3),
-        tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(128, 3, padding='same', activation='relu'),
+
+        tf.keras.layers.Conv2D(128, 3, padding='same'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
+        tf.keras.layers.Conv2D(128, 3, padding='same'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
         tf.keras.layers.MaxPooling2D(2),
-        tf.keras.layers.Conv2D(256, 3, padding='same', activation='relu'),
+
+        tf.keras.layers.Conv2D(256, 3, padding='same'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
         tf.keras.layers.MaxPooling2D(2),
+
         tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(2048, activation='relu'),
+
+        tf.keras.layers.Dense(2048),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
         tf.keras.layers.Dropout(0.5),
-        tf.keras.layers.Dense(2048, activation='relu'),
+
+        tf.keras.layers.Dense(2048),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.Activation('relu'),
         tf.keras.layers.Dropout(0.5),
+
         tf.keras.layers.Dense(1, activation='sigmoid')
     ])
 
@@ -194,7 +217,7 @@ def main():
     # validation_dir = os.path.join(extracted_data_dir, 'validation')
 
     IMAGE_SIZE = (250, 250)
-    BATCH_SIZE = 3
+    BATCH_SIZE = 4
     SEED = 44775
 
     train = 'data/train'
@@ -247,7 +270,7 @@ def main():
 
     history = model.fit(
         train_ds,
-        epochs=10,
+        epochs=9,
         validation_data=validation_ds,
         callbacks=[checkpoint_callback, reduce_lr]
     )
