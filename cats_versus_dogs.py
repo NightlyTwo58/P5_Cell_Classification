@@ -152,7 +152,7 @@ def predict_image(model, image_path, image_size):
         confidence = 1 - prediction[0][0] if is_cat else prediction[0][0]
 
         label = "cat" if is_cat else "dog"
-        print(f"The AI thinks that it's a {label} with a confidence of {confidence * 100:.2f}%.")
+        print(f"The model thinks the image is a {label} with {confidence * 100:.2f}% confidence.")
 
     except FileNotFoundError:
         print(f"Error: The image file at {image_path} was not found.")
@@ -225,11 +225,17 @@ def main():
     model = build_model(IMAGE_SIZE + (3,))
     model.summary()
 
+    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.2,  # Reduce the learning rate by a factor of 0.2
+        patience=4,  # Wait 4 epochs with no improvement before reducing LR
+        min_lr=0.000001,
+        verbose=1
+    )
+
     checkpoint_dir = 'checkpoints'
-    os.makedirs(checkpoint_dir, exist_ok=True)  # Create the directory if it doesn't exist
-
+    os.makedirs(checkpoint_dir, exist_ok=True)
     filepath = os.path.join(checkpoint_dir, "best_model.keras")
-
     checkpoint_callback = ModelCheckpoint(
         filepath=filepath,
         monitor='val_loss',
@@ -238,23 +244,25 @@ def main():
         mode='min',
         verbose=1
     )
-    # Load the best saved model
-    # best_model = tf.keras.models.load_model('checkpoints/best_model.keras')
-    # Use best_model for evaluation or predictions
-    # predict_image(best_model, 'path_to_new_image.jpg', IMAGE_SIZE
 
     history = model.fit(
         train_ds,
         epochs=10,
         validation_data=validation_ds,
-        callbacks=[checkpoint_callback]
+        callbacks=[checkpoint_callback, reduce_lr]
     )
 
     plot_hist(history)
 
-    img_dir = "data/test/cats_set/cat.4001.jpg"  # Update this path
+    img_dir = "data/test/cats_set/cat.4001.jpg"
     predict_image(model, img_dir, IMAGE_SIZE)
 
+def main_checkpoint():
+    IMAGE_SIZE = (250, 250)
+    # Load the best saved model
+    best_model = tf.keras.models.load_model('checkpoints/best_model.keras')
+    # Use best_model for evaluation or predictions
+    predict_image(best_model, "data/test/cats_set/cat.4001.jpg", IMAGE_SIZE)
 
 if __name__ == "__main__":
     main()
