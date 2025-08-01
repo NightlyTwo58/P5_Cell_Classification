@@ -280,12 +280,14 @@ def main():
     img_dir = "data/test/cats_set/cat.4001.jpg"
     predict_image(model, img_dir, IMAGE_SIZE)
 
-def main_checkpoint():
+def main_checkpoint(image_path):
     IMAGE_SIZE = (250, 250)
     # Load the best saved model
     best_model = tf.keras.models.load_model('checkpoints/best_model.keras')
     # Use best_model for evaluation or predictions
-    predict_image(best_model, "data/test/cats_set/cat.4001.jpg", IMAGE_SIZE)
+    predict_image(best_model, image_path, IMAGE_SIZE)
 
 if __name__ == "__main__":
-    main()
+    # main()
+    main_checkpoint("data/test/cats_set/cat.4001.jpg")
+    main_checkpoint("data/test/cats_set/dog.4001.jpg")
