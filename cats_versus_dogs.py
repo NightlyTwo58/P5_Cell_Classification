@@ -4,6 +4,8 @@ import numpy as np
 import os
 from PIL import Image
 
+# this for test data, needs to be manually downloaded and transferred into folder data/test
+# https://www.kaggle.com/datasets/aleemaparakatta/cats-and-dogs-mini-dataset?resource=download
 
 def download_and_extract_data(url, download_dir='data'):
     """
@@ -89,8 +91,15 @@ def build_model(input_shape):
     Returns:
         tf.keras.Model: The compiled Keras model.
     """
+    data_augmentation = tf.keras.Sequential([
+        tf.keras.layers.RandomFlip("horizontal"),
+        tf.keras.layers.RandomRotation(0.1),
+        tf.keras.layers.RandomZoom(0.1)
+    ])
+
     model = tf.keras.Sequential([
         tf.keras.layers.Rescaling(1. / 255, input_shape=input_shape),
+        data_augmentation,
         tf.keras.layers.Conv2D(32, 3, padding='same', activation='relu'),
         tf.keras.layers.MaxPooling2D(3),
         tf.keras.layers.Conv2D(64, 3, padding='same', activation='relu'),
@@ -197,7 +206,7 @@ def main():
         validation_data=validation_ds
     )
 
-    img_dir = "/content/drive/MyDrive/astronomy stuff/cat.jpg"  # Update this path
+    img_dir = "data/test/cats_set/cat.4001.jpg"  # Update this path
     predict_image(model, img_dir, IMAGE_SIZE)
 
 
