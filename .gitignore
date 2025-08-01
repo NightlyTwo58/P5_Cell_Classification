@@ -34,12 +34,3 @@ build/
 
 # Environment variables
 .env
-
-# Data
-data/test/*
-data/train/*
-data/validation/*
-
-!data/test/
-!data/train/
-!data/validation/
