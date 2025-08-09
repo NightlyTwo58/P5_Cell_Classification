@@ -2,259 +2,205 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from PIL import Image
 from keras.callbacks import ModelCheckpoint
+import xml.etree.ElementTree as ET
+from skimage.draw import polygon
+from PIL import Image
 
+def xml_to_label_mask(xml_path, image_shape):
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
 
-# this for test data, needs to be manually downloaded and transferred into folder data/test
-# https://www.kaggle.com/datasets/aleemaparakatta/cats-and-dogs-mini-dataset?resource=download
+    label_mask = np.zeros(image_shape[:2], dtype=np.int32)
 
-def download_and_extract_data(url, download_dir='data'):
-    """
-    Downloads and extracts a zip file from a URL into a specified directory.
+    regions = root.findall('.//Region')
 
-    Args:
-        url (str): The URL of the zip file.
-        download_dir (str): The directory to download and extract the data to.
+    for i, region in enumerate(regions, start=1):
+        vertices = region.find('Vertices')
+        x_coords = []
+        y_coords = []
+        for vertex in vertices.findall('Vertex'):
+            x_coords.append(float(vertex.get('X')))
+            y_coords.append(float(vertex.get('Y')))
 
-    Returns:
-        str: The path to the extracted directory.
-    """
-    if not os.path.exists(download_dir):
-        os.makedirs(download_dir)
-        print(f"Created directory: {download_dir}")
+        rr, cc = polygon(y_coords, x_coords, shape=label_mask.shape)
+        label_mask[rr, cc] = i
 
-    path_to_zip = tf.keras.utils.get_file(
-        origin=url,
-        fname='cats_and_dogs.zip',
-        extract=True,
-        cache_dir=download_dir
+    return label_mask
+
+def load_image_and_mask(image_path, xml_path, image_size):
+    img = Image.open(image_path).convert("RGB")
+    orig_size = img.size
+
+    img = img.resize(image_size)
+    img_array = np.array(img) / 255.0
+
+    label_mask = xml_to_label_mask(xml_path, (orig_size[1], orig_size[0]))
+    mask_img = Image.fromarray(label_mask.astype(np.uint8))
+    mask_img = mask_img.resize(image_size, resample=Image.NEAREST)
+    mask_array = np.array(mask_img)
+    binary_mask = (mask_array > 0).astype(np.float32)[..., np.newaxis]
+
+    return img_array.astype(np.float32), binary_mask.astype(np.float32)
+
+def create_dataset(images_dir, annotations_dir, image_size, batch_size, shuffle=True, augment=False):
+    image_filenames = sorted([f for f in os.listdir(images_dir) if f.endswith('.tif')])
+    xml_filenames = sorted([f for f in os.listdir(annotations_dir) if f.endswith('.xml')])
+    print("Images:", image_filenames)
+    print("XMLs:", xml_filenames)
+    print("Number of images:", len(image_filenames))
+    print("Number of XMLs:", len(xml_filenames))
+
+    image_paths = [os.path.join(images_dir, f) for f in image_filenames]
+    xml_paths = [os.path.join(annotations_dir, f) for f in xml_filenames]
+
+    def generator():
+        for img_path, xml_path in zip(image_paths, xml_paths):
+            image, mask = load_image_and_mask(img_path, xml_path, image_size)
+            yield image, mask
+
+    output_signature = (
+        tf.TensorSpec(shape=(*image_size, 3), dtype=tf.float32),
+        tf.TensorSpec(shape=(*image_size, 1), dtype=tf.float32),
     )
 
-    extracted_dir = os.path.join(download_dir, 'datasets', 'cats_and_dogs_filtered')
+    dataset = tf.data.Dataset.from_generator(generator, output_signature=output_signature)
 
-    print(f"Data downloaded and extracted to: {extracted_dir}")
-    return extracted_dir
+    if shuffle:
+        dataset = dataset.shuffle(buffer_size=100).repeat()
+    else:
+        dataset = dataset.repeat()
+    dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
+    if augment:
+        # Add augmentation if you want, e.g. flipping, rotation
+        def augment_fn(img, mask):
+            img = tf.image.random_flip_left_right(img)
+            mask = tf.image.random_flip_left_right(mask)
+            return img, mask
+        dataset = dataset.map(augment_fn, num_parallel_calls=tf.data.AUTOTUNE)
 
-def create_datasets(data_dir, image_size, batch_size, seed):
-    """
-    Creates training, validation, and test datasets from a directory.
+    return dataset
 
-    Args:
-        data_dir (str): The base directory containing 'train' and 'validation' subdirectories.
-        image_size (tuple): The target size of the images (height, width).
-        batch_size (int): The number of samples per batch.
-        seed (int): A seed for shuffling and transformations.
+# Dummy placeholder for your U-Net building function
+def build_unet(input_shape):
+    inputs = tf.keras.Input(input_shape)
+    x = tf.keras.layers.Conv2D(16, 3, activation='relu', padding='same')(inputs)
+    x = tf.keras.layers.Conv2D(1, 1, activation='sigmoid')(x)
+    return tf.keras.Model(inputs, x)
 
-    Returns:
-        tuple: A tuple containing the training, validation, and test datasets.
-    """
-    train_dir = os.path.join(data_dir, 'train')
-    validation_dir = os.path.join(data_dir, 'validation')
-
-    # The validation set will be split into a new validation and test set
-    cvd_val_test = tf.keras.utils.image_dataset_from_directory(
-        directory=validation_dir,
-        labels='inferred',
-        label_mode='binary',
-        color_mode='rgb',
-        image_size=image_size,
-        batch_size=batch_size,
-        shuffle=True,
-        seed=seed,
-    )
-
-    val_size = int(0.8 * len(cvd_val_test))
-    cvd_val = cvd_val_test.take(val_size)
-    cvd_test = cvd_val_test.skip(val_size)
-
-    cvd_train = tf.keras.utils.image_dataset_from_directory(
-        directory=train_dir,
-        labels='inferred',
-        label_mode='binary',
-        color_mode='rgb',
-        image_size=image_size,
-        batch_size=batch_size,
-        shuffle=True,
-        seed=seed,
-    )
-
-    return cvd_train, cvd_val, cvd_test
-
-
-def build_model(input_shape):
-    """
-    Builds and returns the CNN model with Batch Normalization.
-
-    Args:
-        input_shape (tuple): The shape of the input images (height, width, channels).
-
-    Returns:
-        tf.keras.Model: The compiled Keras model.
-    """
-    data_augmentation = tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.1),
-        tf.keras.layers.RandomZoom(0.1)
-    ])
-
-    model = tf.keras.Sequential([
-        tf.keras.layers.Rescaling(1. / 255, input_shape=input_shape),
-        data_augmentation,
-
-        tf.keras.layers.Conv2D(32, 3, padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.MaxPooling2D(3),
-
-        # Second convolutional block with Batch Normalization
-        tf.keras.layers.Conv2D(64, 3, padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.MaxPooling2D(3),
-
-        tf.keras.layers.Conv2D(128, 3, padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.Conv2D(128, 3, padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.MaxPooling2D(2),
-
-        tf.keras.layers.Conv2D(256, 3, padding='same'),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.MaxPooling2D(2),
-
-        tf.keras.layers.Flatten(),
-
-        tf.keras.layers.Dense(2048),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.Dropout(0.5),
-
-        tf.keras.layers.Dense(2048),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.Dropout(0.5),
-
-        tf.keras.layers.Dense(1, activation='sigmoid')
-    ])
-
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-        loss='binary_crossentropy',
-        metrics=['accuracy']
-    )
-
-    return model
-
-
-def predict_image(model, image_path, image_size):
-    """
-    Loads an image, preprocesses it, and makes a prediction.
-
-    Args:
-        model (tf.keras.Model): The trained Keras model.
-        image_path (str): The path to the image file.
-        image_size (tuple): The size the image should be resized to.
-    """
-    try:
-        img = Image.open(image_path)
-        plt.imshow(img)
-        plt.title("Input Image")
-        plt.show()
-
-        img = img.resize(image_size)
-        img_array = tf.keras.utils.img_to_array(img)
-        img_array = tf.expand_dims(img_array, 0)  # Create a batch
-
-        prediction = model.predict(img_array)
-        is_cat = prediction[0][0] < 0.5
-        confidence = 1 - prediction[0][0] if is_cat else prediction[0][0]
-
-        label = "cat" if is_cat else "dog"
-        print(f"The model thinks the image is a {label} with {confidence * 100:.2f}% confidence.")
-
-    except FileNotFoundError:
-        print(f"Error: The image file at {image_path} was not found.")
-    except Exception as e:
-        print(f"An error occurred during prediction: {e}")
-
-
-def plot_hist(history):
-    print(history.history.keys())
-    acc = history.history['accuracy']
-    val_acc = history.history['val_accuracy']
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
-    epochs_range = range(len(acc))
-
-    plt.figure(figsize=(12, 4))
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs_range, acc, label='Training Accuracy')
-    plt.plot(epochs_range, val_acc, label='Validation Accuracy')
-    plt.legend(loc='lower right')
-    plt.title('Training and Validation Accuracy')
-
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs_range, loss, label='Training Loss')
-    plt.plot(epochs_range, val_loss, label='Validation Loss')
-    plt.legend(loc='upper right')
-    plt.title('Training and Validation Loss')
+def plot_training(history):
+    plt.plot(history.history['loss'], label='train_loss')
+    plt.plot(history.history['val_loss'], label='val_loss')
+    plt.legend()
     plt.show()
 
+def display_sample_prediction(model, dataset):
+    for images, masks in dataset.take(1):
+        preds = model.predict(images)
+        plt.figure(figsize=(12,4))
+        for i in range(min(3, images.shape[0])):
+            plt.subplot(3,3,i*3+1)
+            plt.imshow(images[i])
+            plt.title("Image")
+            plt.axis('off')
+            plt.subplot(3,3,i*3+2)
+            plt.imshow(masks[i,:,:,0], cmap='gray')
+            plt.title("Mask")
+            plt.axis('off')
+            plt.subplot(3,3,i*3+3)
+            plt.imshow(preds[i,:,:,0] > 0.5, cmap='gray')
+            plt.title("Prediction")
+            plt.axis('off')
+        plt.show()
+
+def build_unet(input_shape):
+    inputs = tf.keras.layers.Input(shape=input_shape)
+
+    c1 = tf.keras.layers.Conv2D(32, 3, activation='relu', padding='same')(inputs)
+    c1 = tf.keras.layers.Conv2D(32, 3, activation='relu', padding='same')(c1)
+    p1 = tf.keras.layers.MaxPooling2D()(c1)
+
+    c2 = tf.keras.layers.Conv2D(64, 3, activation='relu', padding='same')(p1)
+    c2 = tf.keras.layers.Conv2D(64, 3, activation='relu', padding='same')(c2)
+    p2 = tf.keras.layers.MaxPooling2D()(c2)
+
+    c3 = tf.keras.layers.Conv2D(128, 3, activation='relu', padding='same')(p2)
+    c3 = tf.keras.layers.Conv2D(128, 3, activation='relu', padding='same')(c3)
+    p3 = tf.keras.layers.MaxPooling2D()(c3)
+
+    bn = tf.keras.layers.Conv2D(256, 3, activation='relu', padding='same')(p3)
+    bn = tf.keras.layers.Conv2D(256, 3, activation='relu', padding='same')(bn)
+
+    u3 = tf.keras.layers.UpSampling2D()(bn)
+    u3 = tf.keras.layers.Concatenate()([u3, c3])
+    c4 = tf.keras.layers.Conv2D(128, 3, activation='relu', padding='same')(u3)
+    c4 = tf.keras.layers.Conv2D(128, 3, activation='relu', padding='same')(c4)
+
+    u2 = tf.keras.layers.UpSampling2D()(c4)
+    u2 = tf.keras.layers.Concatenate()([u2, c2])
+    c5 = tf.keras.layers.Conv2D(64, 3, activation='relu', padding='same')(u2)
+    c5 = tf.keras.layers.Conv2D(64, 3, activation='relu', padding='same')(c5)
+
+    u1 = tf.keras.layers.UpSampling2D()(c5)
+    u1 = tf.keras.layers.Concatenate()([u1, c1])
+    c6 = tf.keras.layers.Conv2D(32, 3, activation='relu', padding='same')(u1)
+    c6 = tf.keras.layers.Conv2D(32, 3, activation='relu', padding='same')(c6)
+
+    outputs = tf.keras.layers.Conv2D(1, (1, 1), activation='sigmoid')(c6)
+
+    model = tf.keras.Model(inputs, outputs)
+
+    def dice_coef(y_true, y_pred, smooth=1e-6):
+        y_true_f = tf.keras.backend.flatten(y_true)
+        y_pred_f = tf.keras.backend.flatten(y_pred)
+        intersection = tf.keras.backend.sum(y_true_f * y_pred_f)
+        return (2. * intersection + smooth) / (tf.keras.backend.sum(y_true_f) + tf.keras.backend.sum(y_pred_f) + smooth)
+
+    def dice_loss(y_true, y_pred):
+        return 1.0 - dice_coef(y_true, y_pred)
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+                  loss=dice_loss,
+                  metrics=['accuracy', tf.keras.metrics.MeanIoU(num_classes=2), dice_coef])
+    return model
+
+def visualize_dataset_sample(dataset, num_samples=3):
+    for images, masks in dataset.take(1):
+        for i in range(num_samples):
+            plt.figure(figsize=(8, 4))
+
+            plt.subplot(1, 2, 1)
+            plt.imshow(images[i])
+            plt.title("Image")
+            plt.axis('off')
+
+            plt.subplot(1, 2, 2)
+            plt.imshow(masks[i, :, :, 0], cmap='gray')
+            plt.title("Mask")
+            plt.axis('off')
+
+            plt.show()
 
 def main():
-    """
-    Main function to run the entire cats vs dogs classification workflow.
-    """
-    # URL = 'https://storage.googleapis.com/mledu-datasets/cats_and_dogs_filtered.zip'
-    # print(tf.config.list_physical_devices('GPU'))
-    # extracted_data_dir = download_and_extract_data(URL)
-    # train_dir = os.path.join(extracted_data_dir, 'train')
-    # validation_dir = os.path.join(extracted_data_dir, 'validation')
+    IMAGE_SIZE = (128, 128)
+    BATCH_SIZE = 8
+    EPOCHS = 30
 
-    IMAGE_SIZE = (250, 250)
-    BATCH_SIZE = 4
-    SEED = 44775
+    train_images = "data/train/images"
+    train_masks = "data/train/annotations"
+    val_images = "data/test/images"
+    val_masks = "data/test/annotations"
 
-    train = 'data/train'
-    validation = 'data/validation'
+    train_dataset = create_dataset(train_images, train_masks, IMAGE_SIZE, BATCH_SIZE, shuffle=True, augment=True)
+    val_dataset = create_dataset(val_images, val_masks, IMAGE_SIZE, BATCH_SIZE, shuffle=False, augment=False)
 
-    train_ds = tf.keras.utils.image_dataset_from_directory(
-        directory=train,
-        labels='inferred',
-        label_mode='binary',
-        color_mode='rgb',
-        image_size=IMAGE_SIZE,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        seed=SEED
-    )
+    visualize_dataset_sample(train_dataset)
+    visualize_dataset_sample(val_dataset)
+    plt.close('all')
 
-    validation_ds = tf.keras.utils.image_dataset_from_directory(
-        directory=validation,
-        labels='inferred',
-        label_mode='binary',
-        color_mode='rgb',
-        image_size=IMAGE_SIZE,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        seed=SEED
-    )
-
-    model = build_model(IMAGE_SIZE + (3,))
+    model = build_unet(IMAGE_SIZE + (3,))
     model.summary()
-
-    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor='val_loss',
-        factor=0.2,  # Reduce the learning rate by a factor of 0.2
-        patience=4,  # Wait 4 epochs with no improvement before reducing LR
-        min_lr=0.000001,
-        verbose=1
-    )
 
     checkpoint_dir = 'checkpoints'
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -263,31 +209,24 @@ def main():
         filepath=filepath,
         monitor='val_loss',
         save_best_only=True,
-        save_weights_only=False,
         mode='min',
         verbose=1
     )
 
+    steps_per_epoch = len(train_images)
+    validation_steps = len(val_images)
+
     history = model.fit(
-        train_ds,
-        epochs=9,
-        validation_data=validation_ds,
-        callbacks=[checkpoint_callback, reduce_lr]
+        train_dataset,
+        validation_data=val_dataset,
+        epochs=EPOCHS,
+        steps_per_epoch=steps_per_epoch,
+        validation_steps=validation_steps,
+        callbacks=[checkpoint_callback]
     )
 
-    plot_hist(history)
-
-    img_dir = "data/test/cats_set/cat.4001.jpg"
-    predict_image(model, img_dir, IMAGE_SIZE)
-
-def main_checkpoint(image_path):
-    IMAGE_SIZE = (250, 250)
-    # Load the best saved model
-    best_model = tf.keras.models.load_model('checkpoints/best_model.keras')
-    # Use best_model for evaluation or predictions
-    predict_image(best_model, image_path, IMAGE_SIZE)
+    plot_training(history)
+    display_sample_prediction(model, val_dataset)
 
 if __name__ == "__main__":
     main()
-    # main_checkpoint("data/test/cats_set/cat.4004.jpg")
-    # main_checkpoint("data/test/dogs_set/dog.4005.jpg")
