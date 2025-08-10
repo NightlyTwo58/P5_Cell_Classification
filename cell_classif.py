@@ -82,13 +82,6 @@ def create_dataset(images_dir, annotations_dir, image_size, batch_size, shuffle=
 
     return dataset
 
-# Dummy placeholder for your U-Net building function
-def build_unet(input_shape):
-    inputs = tf.keras.Input(input_shape)
-    x = tf.keras.layers.Conv2D(16, 3, activation='relu', padding='same')(inputs)
-    x = tf.keras.layers.Conv2D(1, 1, activation='sigmoid')(x)
-    return tf.keras.Model(inputs, x)
-
 def plot_training(history):
     plt.plot(history.history['loss'], label='train_loss')
     plt.plot(history.history['val_loss'], label='val_loss')
