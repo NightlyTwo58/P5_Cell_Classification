@@ -1,3 +1,5 @@
+import math
+
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
@@ -80,7 +82,7 @@ def create_dataset(images_dir, annotations_dir, image_size, batch_size, shuffle=
             return img, mask
         dataset = dataset.map(augment_fn, num_parallel_calls=tf.data.AUTOTUNE)
 
-    return dataset
+    return dataset, len(image_filenames)
 
 def plot_training(history):
     plt.plot(history.history['loss'], label='train_loss')
@@ -173,7 +175,8 @@ def visualize_dataset_sample(dataset, num_samples=3):
             plt.title("Mask")
             plt.axis('off')
 
-            plt.show()
+            plt.show(block=True)
+            plt.close('all')
 
 def main():
     IMAGE_SIZE = (128, 128)
@@ -185,8 +188,10 @@ def main():
     val_images = "data/test/images"
     val_masks = "data/test/annotations"
 
-    train_dataset = create_dataset(train_images, train_masks, IMAGE_SIZE, BATCH_SIZE, shuffle=True, augment=True)
-    val_dataset = create_dataset(val_images, val_masks, IMAGE_SIZE, BATCH_SIZE, shuffle=False, augment=False)
+    train_dataset, train_len = create_dataset(train_images, train_masks, IMAGE_SIZE, BATCH_SIZE, shuffle=True, augment=True)
+    plt.close('all')
+    val_dataset, val_len = create_dataset(val_images, val_masks, IMAGE_SIZE, BATCH_SIZE, shuffle=False, augment=False)
+    plt.close('all')
 
     visualize_dataset_sample(train_dataset)
     visualize_dataset_sample(val_dataset)
@@ -206,15 +211,12 @@ def main():
         verbose=1
     )
 
-    steps_per_epoch = len(train_images)
-    validation_steps = len(val_images)
-
     history = model.fit(
         train_dataset,
         validation_data=val_dataset,
         epochs=EPOCHS,
-        steps_per_epoch=steps_per_epoch,
-        validation_steps=validation_steps,
+        steps_per_epoch=math.ceil(train_len / BATCH_SIZE),
+        validation_steps=math.ceil(val_len / BATCH_SIZE),
         callbacks=[checkpoint_callback]
     )
 
